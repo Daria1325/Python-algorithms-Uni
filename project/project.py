@@ -1,4 +1,4 @@
-import string
+import time 
 import numpy as np
 import random
 import sys
@@ -7,7 +7,7 @@ import sys
 population_size = 10
 n = 5           #к-сть кур'єрів піших
 m = 5            #к-сть машин
-p = 10          #к-сть пакунків
+p = 25         #к-сть пакунків
 d = [[0.0,10,5.0,3.0,8.0,4.2],
      [10,0.0,4.0,2.0,4.7,7.0],
      [5.0,4.0,0.0,10,5.5,2.2],
@@ -18,6 +18,10 @@ vk = 4           #швидкість кур'єра
 va = 60          #швидкість машини
 zk = 90          #зарплата кур'єра
 tsa = 15*50         #витрата пального ????
+max_weight_car = 200
+max_size_car = 2*2*1
+max_weight_human = 5
+max_size_human = 0.3*0.3*0.3
 
 
 
@@ -33,7 +37,7 @@ class Package(object):
     
     def detect_type(self):
         type = None
-        if self.Weight>5:
+        if self.Weight>max_weight_human:
             type = "Car"
         elif len(self.Size)==3 and (self.Size[0]>=0.3 or self.Size[1]>=0.3 or self.Size[2]>=0.3):
             type = "Car"
@@ -66,9 +70,21 @@ class population(object):
             
             
         self.packages = sorted(self.packages, key=lambda x:x.Weight, reverse=True)
-        self.population=[]
-        for _ in range(self.population_size):
-            self.population.append(Individ(m,n,clear=False,packages=self.packages))  
+        count=0
+        while count<2:
+            self.population=[]
+            for _ in range(self.population_size):
+                new_ind =Individ(m,n,clear=False,packages=self.packages)
+                if new_ind.Delivery:
+                    self.population.append(new_ind)  #check if returned None
+            if len(self.population)<=5:
+                random.seed(time.time()+1)
+                count+=1
+            else:
+                break
+        if count==2:
+            print("Could not find the route, try to increase resourses")
+            sys.exit()
         self.fitness() 
         sortedPop=sorted(self.population, key=lambda x: x.cost)[:self.population_size]
         self.best = sortedPop[0]
@@ -80,8 +96,8 @@ class population(object):
             weight+=pack.Weight
             if len(pack.Size)==3:
                 size+= pack.Size[0]*pack.Size[1]*pack.Size[2]
-        totalWeight = 200*m+5*n
-        totalSize = 2*2*1*m
+        totalWeight = max_weight_car*m+max_weight_human*n
+        totalSize = max_size_car*m
         if totalWeight<weight or totalSize<size:
             return False
         else:
@@ -142,59 +158,101 @@ class Individ(object):
                 else:
                     type="Human"
                 text+= "Cost of route: {}\n".format(self.countOneRoute(self.Delivery[i],type))
+                count = self.count_weight_size(self.Delivery[i])
+                text+= "Weight {} out of {}, Size {}m3 out of {}m3\n".format(count[0],max_weight_car,count[1],max_size_car)
             else:
                 text+="Empty\n"
-        text+="Cost of delivery: {}\n".format(self.cost)
+        text+="Cost of delivery: {}\n".format(round(self.cost,2))
         return text
     
-    # def generate(self,m,n,clear,packages):
-    #     deliveriesByCar = []
-    #     deliveriesByHuman = []
-    #     [deliveriesByCar.append([]) for _ in range(m)]
-    #     [deliveriesByHuman.append([]) for _ in range(n)]
+    def count_weight_size(self,route):
+        weight =0.
+        for item in route:
+            weight+= item.Weight
+        size =0.
+        for item in route:
+            if len(item.Size)==3:
+                size+= item.Size[0]*item.Size[1]*item.Size[2]
+        return round(weight,2),round(size,2)
         
-    #     if clear==False:
-    #         for pack in packages:
-    #             if pack.Type=="Car":
-    #                 index=np.random.randint(0,m)
-    #                 deliveriesByCar[index].append(pack)
-    #             else:
-    #                 #!!!! когда не хватаєт кур'єров
-    #                 while self.check_available_postman(deliveriesByHuman):
-    #                     index=np.random.randint(0,n)
-    #                     if self.check_weight(deliveriesByHuman[index],pack):
-    #                         deliveriesByHuman[index].append(pack)
-    #                         break
-    #         self.Delivery = deliveriesByCar+deliveriesByHuman
-    #         self.count_cost()
-    #     else:
-    #         self.Delivery = deliveriesByCar+deliveriesByHuman
+    def find_possible_route(self,delivery,pack):
+        if pack.detect_type()=="Car":
+            for i, route in enumerate(delivery):
+                weight, size = self.count_weight_size(route)
+                weight+= pack.Weight
+                size+= pack.Size[0]+pack.Size[1]+pack.Size[2]
+                if weight<=max_weight_car and size <= max_size_car:
+                    return i
+            return None
+        if pack.detect_type()=="Human":
+            for i, route in enumerate(delivery):
+                weight, size = self.count_weight_size(route)
+                weight+= pack.Weight
+                if len(pack.Size)==3:
+                    size+= pack.Size[0]+pack.Size[1]+pack.Size[2]
+                if weight<=max_weight_human and size <= max_size_human:
+                    return i
+            return None
+
+
+
+
+
     def generate(self,m,n,clear,packages):
         deliveries = []
         [deliveries.append([]) for _ in range(m)]
         [deliveries.append([]) for _ in range(n)]
         
         if clear==False:
-            for pack in packages:
-                if pack.detect_type()=="Car":
-                    while True:
-                        index=np.random.randint(0,m)
-                        
-                        if self.check_weight("Car",route=deliveries[index],pack= pack) and self.check_size(route=deliveries[index],pack= pack):
-                            deliveries[index].append(pack)
+            countFails = 0.
+            while True:
+                flag=True
+                for pack in packages:
+                    if pack.detect_type()=="Car":
+                        while flag:
+                            index=np.random.randint(0,m)
+                            if self.check_weight("Car",route=deliveries[index],pack= pack) and self.check_size("Car",route=deliveries[index],pack= pack):
+                                deliveries[index].append(pack)
+                                break
+                            possible_route=self.find_possible_route(deliveries[:m],pack)
+                            if possible_route!=None:
+                                deliveries[possible_route].append(pack)
+                            else:
+                                flag=False
+                        if flag==False:
+                            countFails+=1
+                            deliveries = []
+                            [deliveries.append([]) for _ in range(m)]
+                            [deliveries.append([]) for _ in range(n)]
                             break
-                else:
-                    while True:
-                        index=np.random.randint(0,n+m)
-                        if index<m:
-                            type="Car"
-                            fitted=self.check_size(route=deliveries[index],pack= pack)#Check if has place in car
-                        else:
-                            type="Human"
-                            fitted=True
-                        if self.check_weight(type,route=deliveries[index],pack= pack) and fitted:
-                            deliveries[index].append(pack)
+
+                    else:
+                        while flag:
+                            index=np.random.randint(0,n+m)
+                            if index<m:
+                                type="Car"
+                            else:
+                                type="Human"
+                            fitted=self.check_size(type,route=deliveries[index],pack= pack)
+                            if self.check_weight(type,route=deliveries[index],pack= pack) and fitted:
+                                deliveries[index].append(pack)
+                                break
+                            possible_route=self.find_possible_route(deliveries,pack)
+                            if possible_route!=None:
+                                deliveries[possible_route].append(pack)
+                            else:
+                                flag=False
+                        if flag==False:
+                            countFails+=1
+                            deliveries = []
+                            [deliveries.append([]) for _ in range(m)]
+                            [deliveries.append([]) for _ in range(n)]
                             break
+
+                if flag==True:
+                    break
+                if countFails>10000:
+                    return None
             self.Delivery = deliveries
             self.count_cost()
         else:
@@ -240,20 +298,6 @@ class Individ(object):
         return sum
 
     #Перемішування посилок в одному маршруті
-    # def shuffle(self):
-    #     newRout = []
-    #     index = np.random.randint(0,len(self.Delivery))
-    #     for i in range(len(self.Delivery[index])):
-    #             newRout.append(self.Delivery[index][i])     
-    #     np.random.shuffle(newRout)
-        
-    #     if self.countOneRoute(newRout)<self.countOneRoute(self.Delivery[index]):
-    #         newInd=self.copy()
-    #         newInd.Delivery[index]= newRout
-    #         newInd.count_cost()
-    #         return newInd
-    #     else:
-    #         return None
     def shuffle(self):
         newDelivery = []
         count=0
@@ -284,34 +328,6 @@ class Individ(object):
                   
     
     #Обмін однією посилкою між доставками однакового типу
-    # def exchange(self):
-    #     if np.random.random()<0.5:
-    #         indexRoute1, indexRoute2 = random.sample(range(0, m), 2)
-    #     else:
-    #         indexRoute1, indexRoute2 = random.sample(range(m, m+n), 2)
-           
-
-    #     if self.Delivery[indexRoute1] and self.Delivery[indexRoute2]:
-    #         indexItem1 = np.random.randint(0,len(self.Delivery[indexRoute1]))
-    #         indexItem2 = np.random.randint(0,len(self.Delivery[indexRoute2]))
-    #     else:
-    #         return None
-
-    #     newRoute1 = self.copy()
-
-    #     newRoute1.Delivery[indexRoute1].append(self.Delivery[indexRoute2][indexItem2])
-    #     newRoute1.Delivery[indexRoute2].append(self.Delivery[indexRoute1][indexItem1])
-        
-    #     del newRoute1.Delivery[indexRoute1][indexItem1]
-    #     del newRoute1.Delivery[indexRoute2][indexItem2]
-
-    #     newRoute1.count_cost()
-    #     #только людям машинам нет
-
-    #     if self.check_weight(newRoute1.Delivery[indexRoute1])and self.check_weight(newRoute1.Delivery[indexRoute2]):
-    #         return newRoute1
-    #     else:
-    #         return None
     def exchange(self):
         indexRoute1, indexRoute2 = random.sample(range(0, m+n), 2)
         if self.Delivery[indexRoute1] and self.Delivery[indexRoute2]:
@@ -348,16 +364,18 @@ class Individ(object):
         flag =[True,True,True,True]
         if indexRoute1<m:
             type="Car"
-            flag[2]=self.check_size(newRoute.Delivery[indexRoute1])
+            
         else:
             type="Human"
         flag[0]=self.check_weight(type,newRoute.Delivery[indexRoute1])
+        flag[2]=self.check_size(type,newRoute.Delivery[indexRoute1])
         if indexRoute2<m:
             type="Car"
-            flag[3]=self.check_size(newRoute.Delivery[indexRoute2])
+            
         else:
             type="Human"
         flag[1]=self.check_weight(type,newRoute.Delivery[indexRoute2])
+        flag[3]=self.check_size(type,newRoute.Delivery[indexRoute2])
         
         if False not in flag:
             return newRoute
@@ -366,34 +384,6 @@ class Individ(object):
     
 
     #видалення посилки з однієї доставки й передача в іншу
-    # def returning(self):
-    #     if np.random.random()<0.5:
-    #         indexRoute1 = np.random.randint(0,m)
-    #         indexRoute2 = np.random.randint(0,m)
-    #     else:
-    #         indexRoute1 = np.random.randint(m,n+m)
-    #         indexRoute2 = np.random.randint(m,n+m)
-
-
-    #     newRoute1 = self.copy()
-
-    #     if self.Delivery[indexRoute1]:
-    #         indexItem = np.random.randint(0,len(self.Delivery[indexRoute1]))
-    #         newRoute1.Delivery[indexRoute2].append(self.Delivery[indexRoute1][indexItem])
-    #         del newRoute1.Delivery[indexRoute1][indexItem]
-    #     elif self.Delivery[indexRoute1]:
-    #         indexItem = np.random.randint(0,len(self.Delivery[indexRoute2]))
-    #         newRoute1.Delivery[indexRoute1].append(self.Delivery[indexRoute2][indexItem])
-    #         del newRoute1.Delivery[indexRoute2][indexItem]
-    #     else:
-    #         return None
-
-    #     newRoute1.count_cost()
-
-    #     if self.check_weight(newRoute1.Delivery[indexRoute1])and self.check_weight(newRoute1.Delivery[indexRoute2]):
-    #         return newRoute1
-    #     else:
-    #         return None
 
     def returning(self):
         newRoute = self.copy()
@@ -419,16 +409,17 @@ class Individ(object):
         flag =[True,True,True,True]
         if indexRoute1<m:
             type="Car"
-            flag[2]=self.check_size(newRoute.Delivery[indexRoute1])
+            
         else:
             type="Human"
         flag[0]=self.check_weight(type,newRoute.Delivery[indexRoute1])
+        flag[2]=self.check_size(type,newRoute.Delivery[indexRoute1])
         if indexRoute2<m:
             type="Car"
-            flag[3]=self.check_size(newRoute.Delivery[indexRoute2])
         else:
             type="Human"
         flag[1]=self.check_weight(type,newRoute.Delivery[indexRoute2])
+        flag[3]=self.check_size(type,newRoute.Delivery[indexRoute2])
         
         if False not in flag:
             return newRoute
@@ -442,26 +433,27 @@ class Individ(object):
             weight+= item.Weight
         if pack==None:
             if type=="Car":
-                return weight<=200
+                return weight<=max_weight_car
             else:
-                return weight <=5.
+                return weight <=max_weight_human
         else:
             if type=="Car":
-                return weight+pack.Weight<=200
+                return weight+pack.Weight<=max_weight_car
             else:
-                return weight+pack.Weight <=5.
+                return weight+pack.Weight <=max_weight_human
 
-    def check_size(self,route,pack=None):
+    def check_size(self,type,route,pack=None):
         size =0.
         for item in route:
             if len(item.Size)==3:
                 size+= item.Size[0]*item.Size[1]*item.Size[2]
-        if pack==None:
-            return size< 2*2*1
-        else:
+        if pack!=None:
             if len(pack.Size)==3:
                 size+= pack.Size[0]*pack.Size[1]*pack.Size[2]
-            return size <2*2*1
+        if type=="Car":
+            return size< max_size_car
+        else:
+            return size< max_size_human
 
 
             
@@ -471,10 +463,10 @@ def generate_package(num):
     for i in range(num):
         address = i%5+1
         if i <num/2:
-            weight = round(np.random.uniform(0.05,10),2)
+            weight = round(np.random.uniform(0.05,5),2)
         else:
-            weight = round(np.random.uniform(50,150),2)
-        if weight >5:
+            weight = round(np.random.uniform(50,80),2)
+        if weight >max_weight_human:
             size = np.random.uniform(0.3,1,3)
         else:
             if weight>0.2:
